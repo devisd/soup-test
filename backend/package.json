@@ -1,0 +1,26 @@
+{
+  "name": "mediasoup-backend",
+  "version": "1.0.0",
+  "description": "Backend for mediasoup video conferencing",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "mon": "nodemon src/app.js",
+    "lint": "npx prettier --write .",
+    "docker-build": "docker build --tag dirvann/mediasoup-video-rooms .",
+    "docker-run": "docker run --name dirvann-mediasoup-rooms -p 10000-10100:10000-10100 -p 3016:3016 dirvann/mediasoup-video-rooms",
+    "docker-start": "docker start dirvann-mediasoup-rooms",
+    "docker-stop": "docker stop dirvann-mediasoup-rooms"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "httpolyglot": "^0.1.2",
+    "mediasoup": "^3.14.1",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "prettier": "3.2.5"
+  }
+}

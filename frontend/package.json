@@ -1,0 +1,24 @@
+{
+    "name": "mediasoup-frontend",
+    "version": "1.0.0",
+    "description": "Frontend for mediasoup video conferencing",
+    "scripts": {
+        "start": "vite",
+        "build": "vite build",
+        "dev": "vite"
+    },
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "socket.io-client": "^4.7.5",
+        "mediasoup-client": "^3.6.56"
+    },
+    "devDependencies": {
+        "typescript": "^4.9.5",
+        "@types/react": "^18.2.0",
+        "@types/react-dom": "^18.2.0",
+        "vite": "^4.0.0"
+    }
+}
