@@ -55,8 +55,41 @@ export function useRoomClient({ roomId, userName }: RoomClientOptions) {
 
     // Подключение к socket.io
     useEffect(() => {
-        // Подключаемся к серверу socket.io
-        const socket = io();
+        // Подключаемся к серверу socket.io через proxy
+        let socket = io({
+            forceNew: true,
+            timeout: 20000,
+        });
+        
+        socket.on('connect', () => {
+            console.log('✅ Socket connected successfully, ID:', socket.id);
+        });
+        
+        socket.on('disconnect', (reason) => {
+            console.log('❌ Socket disconnected, reason:', reason);
+        });
+        
+        socket.on('connect_error', (error) => {
+            console.log('❌ Socket connection error:', error);
+            // Если подключение через proxy не работает, пробуем прямое подключение
+            socket.disconnect();
+            socket = io('https://192.168.1.123:3016', {
+                forceNew: true,
+                timeout: 20000,
+                rejectUnauthorized: false, // Игнорировать самоподписанные сертификаты
+            });
+            
+            socket.on('connect', () => {
+                console.log('✅ Direct socket connected successfully, ID:', socket.id);
+            });
+            
+            socket.on('disconnect', (reason) => {
+                console.log('❌ Direct socket disconnected, reason:', reason);
+            });
+            
+            socketRef.current = socket;
+        });
+        
         socketRef.current = socket;
         return () => {
             // Отключаемся при размонтировании
@@ -67,37 +100,64 @@ export function useRoomClient({ roomId, userName }: RoomClientOptions) {
     // Создание комнаты и вход
     const joinRoom = useCallback(() => {
         const socket = socketRef.current;
-        if (!socket) return;
-        if (joinedRef.current) return;
+        if (!socket) {
+            console.log('❌ No socket available');
+            return;
+        }
+        if (joinedRef.current) {
+            console.log('⚠️ Already joined');
+            return;
+        }
+        
+        console.log('🔄 Socket connected:', socket.connected);
         joinedRef.current = true;
 
+        console.log('📞 Creating room:', roomId);
         // 1. Создать комнату (если не существует)
         socket.emit('createRoom', { room_id: roomId }, (response: ServerResponse) => {
-            // Неважно, если "already exists"
+            console.log('🏠 Create room response:', response);
+            
             // 2. Войти в комнату
+            console.log('🚪 Joining room:', roomId, 'as user:', userName);
             socket.emit('join', { room_id: roomId, name: userName }, async (joinResp: ServerResponse) => {
+                console.log('✅ Join response:', joinResp);
+                
                 if (joinResp.error) {
+                    console.log('❌ Join error:', joinResp.error);
                     setState(s => ({ ...s, error: joinResp.error }));
                     return;
                 }
                 setState(s => ({ ...s, joined: true, error: undefined }));
+                
                 // 3. Получить rtpCapabilities и создать Device
+                console.log('🔧 Getting RTP capabilities...');
                 try {
                     socket.emit('getRouterRtpCapabilities', {}, async (rtpCapabilities: any) => {
+                        console.log('📡 RTP Capabilities received:', rtpCapabilities);
+                        
                         try {
+                            console.log('🎛️ Creating mediasoup device...');
                             const device = new mediasoupClient.Device();
                             await device.load({ routerRtpCapabilities: rtpCapabilities });
                             deviceRef.current = device;
+                            console.log('✅ Device created successfully');
                             setState(s => ({ ...s, deviceReady: true }));
                         } catch (err) {
+                            console.log('❌ Mediasoup device error:', err);
                             setState(s => ({ ...s, error: 'Mediasoup device error: ' + (err instanceof Error ? err.message : String(err)) }));
                         }
                     });
                 } catch (err) {
+                    console.log('❌ Failed to get RTP Capabilities:', err);
                     setState(s => ({ ...s, error: 'Failed to get RTP Capabilities' }));
                 }
             });
         });
+    }, [roomId, userName, state.joined]);
+
+    // Сбрасываем joinedRef при смене комнаты/пользователя
+    useEffect(() => {
+        joinedRef.current = false;
     }, [roomId, userName]);
 
     // Получение и обновление списка участников
@@ -127,52 +187,102 @@ export function useRoomClient({ roomId, userName }: RoomClientOptions) {
     const startTransports = useCallback(() => {
         const socket = socketRef.current;
         const device = deviceRef.current;
-        if (!socket || !device) return;
+        if (!socket || !device) {
+            console.log('❌ No socket or device for transports');
+            return;
+        }
 
+        console.log('🚛 Creating producer transport...');
         // Producer Transport
         socket.emit('createWebRtcTransport', { forceTcp: false, rtpCapabilities: device.rtpCapabilities }, (data: any) => {
+            console.log('📤 Producer transport response:', data);
+            
             if (data.error) {
+                console.log('❌ Producer transport error:', data.error);
                 setState(s => ({ ...s, error: 'Producer transport error: ' + data.error }));
                 return;
             }
             const producerTransport = device.createSendTransport(data);
             producerTransportRef.current = producerTransport;
+            console.log('✅ Producer transport created');
 
             producerTransport.on('connect', ({ dtlsParameters }, callback, errback) => {
+                console.log('🔗 Producer transport connecting...');
                 socket.emit('connectTransport', { dtlsParameters, transport_id: data.id }, (response: any) => {
-                    if (response && response.error) errback(response.error);
-                    else callback();
+                    if (response && response.error) {
+                        console.log('❌ Producer transport connect error:', response.error);
+                        errback(response.error);
+                    } else {
+                        console.log('✅ Producer transport connected');
+                        callback();
+                    }
                 });
             });
 
+            producerTransport.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
+                console.log('🎤 Producing media:', kind);
+                try {
+                    socket.emit('produce', {
+                        producerTransportId: producerTransport.id,
+                        kind,
+                        rtpParameters,
+                    }, (response: any) => {
+                        if (response && response.error) {
+                            console.log('❌ Produce error:', response.error);
+                            errback(response.error);
+                        } else {
+                            console.log('✅ Produce success, producer_id:', response.producer_id);
+                            callback({ id: response.producer_id });
+                        }
+                    });
+                } catch (err) {
+                    console.log('❌ Produce exception:', err);
+                    errback(err);
+                }
+            });
+
             producerTransport.on('connectionstatechange', (state) => {
+                console.log('📤 Producer transport state:', state);
                 if (state === 'failed') {
                     producerTransport.close();
                 }
             });
 
+            console.log('🚛 Creating consumer transport...');
             // Consumer Transport
             socket.emit('createWebRtcTransport', { forceTcp: false }, (data2: any) => {
+                console.log('📥 Consumer transport response:', data2);
+                
                 if (data2.error) {
+                    console.log('❌ Consumer transport error:', data2.error);
                     setState(s => ({ ...s, error: 'Consumer transport error: ' + data2.error }));
                     return;
                 }
                 const consumerTransport = device.createRecvTransport(data2);
                 consumerTransportRef.current = consumerTransport;
+                console.log('✅ Consumer transport created');
 
                 consumerTransport.on('connect', ({ dtlsParameters }, callback, errback) => {
+                    console.log('🔗 Consumer transport connecting...');
                     socket.emit('connectTransport', { dtlsParameters, transport_id: data2.id }, (response: any) => {
-                        if (response && response.error) errback(response.error);
-                        else callback();
+                        if (response && response.error) {
+                            console.log('❌ Consumer transport connect error:', response.error);
+                            errback(response.error);
+                        } else {
+                            console.log('✅ Consumer transport connected');
+                            callback();
+                        }
                     });
                 });
 
                 consumerTransport.on('connectionstatechange', (state) => {
+                    console.log('📥 Consumer transport state:', state);
                     if (state === 'failed') {
                         consumerTransport.close();
                     }
                 });
 
+                console.log('🎉 All transports ready!');
                 setState(s => ({ ...s, transportsReady: true }));
             });
         });

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Socket.IO Connection</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body>
+    <h1>Test Socket.IO Connection</h1>
+    <div id="status">Подключение...</div>
+    <div id="log"></div>
+    
+    <script>
+        const statusDiv = document.getElementById('status');
+        const logDiv = document.getElementById('log');
+        
+        function log(message) {
+            console.log(message);
+            logDiv.innerHTML += '<p>' + message + '</p>';
+        }
+        
+        // Тест 1: Подключение через proxy (для Vite dev server)
+        log('Тест 1: Подключение через proxy...');
+        const socket1 = io({
+            forceNew: true,
+            timeout: 5000,
+        });
+        
+        socket1.on('connect', () => {
+            log('✅ Подключение через proxy успешно!');
+            statusDiv.innerText = 'Подключен через proxy';
+            
+            // Тест создания комнаты
+            socket1.emit('createRoom', { room_id: 'test-room' }, (response) => {
+                log('Ответ на createRoom: ' + JSON.stringify(response));
+            });
+        });
+        
+        socket1.on('connect_error', (error) => {
+            log('❌ Ошибка подключения через proxy: ' + error.message);
+            
+            // Тест 2: Прямое подключение к backend
+            log('Тест 2: Прямое подключение к backend...');
+            const socket2 = io('https://192.168.1.123:3016', {
+                forceNew: true,
+                timeout: 5000,
+                rejectUnauthorized: false, // Игнорировать самоподписанные сертификаты
+            });
+            
+            socket2.on('connect', () => {
+                log('✅ Прямое подключение к backend успешно!');
+                statusDiv.innerText = 'Подключен напрямую к backend';
+                
+                // Тест создания комнаты
+                socket2.emit('createRoom', { room_id: 'test-room' }, (response) => {
+                    log('Ответ на createRoom: ' + JSON.stringify(response));
+                });
+            });
+            
+            socket2.on('connect_error', (error) => {
+                log('❌ Ошибка прямого подключения: ' + error.message);
+                statusDiv.innerText = 'Ошибка подключения';
+            });
+        });
+        
+        socket1.on('disconnect', () => {
+            log('Отключен от сервера');
+        });
+        
+        // Таймаут для тестов
+        setTimeout(() => {
+            if (statusDiv.innerText === 'Подключение...') {
+                statusDiv.innerText = 'Таймаут подключения';
+                log('⏰ Таймаут подключения');
+            }
+        }, 10000);
+    </script>
+</body>
+</html> 

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { DeviceSelector } from './DeviceSelector';
 import { ParticipantsList } from './ParticipantsList';
 import { MediaControls } from './MediaControls';
@@ -37,6 +37,14 @@ export const Room: React.FC<RoomProps> = ({ roomId, userName, onExit }) => {
         participants,
     } = useRoomClient({ roomId, userName });
 
+    // Автоматический вход в комнату при монтировании
+    useEffect(() => {
+        if (!state.joined) {
+            console.log('🚀 Joining room:', roomId, 'as user:', userName);
+            joinRoom();
+        }
+    }, [roomId, userName]);
+
     // Индикаторы загрузки
     const isLoading = !state.deviceReady || !state.transportsReady;
 
@@ -64,6 +72,12 @@ export const Room: React.FC<RoomProps> = ({ roomId, userName, onExit }) => {
             <h2>Room: {roomId}</h2>
             <h3>User: {userName}</h3>
             <button onClick={handleExit} style={{ marginBottom: 16 }}>Выйти</button>
+            
+            {/* Отладочная информация */}
+            <div style={{ fontSize: '12px', color: '#666', marginBottom: 16 }}>
+                Status: joined={String(state.joined)} | deviceReady={String(state.deviceReady)} | transportsReady={String(state.transportsReady)}
+            </div>
+            
             <DeviceSelector onAudioChange={setAudioDeviceId} onVideoChange={setVideoDeviceId} />
             <ParticipantsList participants={participants} />
             {isLoading && <div>Загрузка медиа...</div>}

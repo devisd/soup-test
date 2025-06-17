@@ -1,18 +1,21 @@
-FROM node:12
+FROM node:18-alpine
 
 WORKDIR /app
-RUN apt-get update
-COPY package-lock.json .
-COPY package.json .
-RUN npm install
 
-COPY src src
-COPY ssl ssl
-COPY public public
+# Установка зависимостей
+COPY package*.json ./
+RUN npm ci --only=production
 
+# Копирование исходного кода и SSL папки
+COPY src/ ./src/
+COPY ssl/ ./ssl/
+
+# Создание папки ssl если она пустая
+RUN mkdir -p ssl
+
+# Открытие портов
 EXPOSE 3016
-EXPOSE 10000-10100
+EXPOSE 10000-10100/udp
 
-RUN npm i -g nodemon
-
-CMD npm start
+# Запуск приложения
+CMD ["npm", "start"]

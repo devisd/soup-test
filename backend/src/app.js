@@ -194,6 +194,11 @@ io.on('connection', (socket) => {
   })
 
   socket.on('getMyRoomInfo', (_, cb) => {
+    if (!socket.room_id || !roomList.has(socket.room_id)) {
+      return cb({
+        error: 'not currently in a room'
+      })
+    }
     cb(roomList.get(socket.room_id).toJson())
   })
 
