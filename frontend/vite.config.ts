@@ -8,6 +8,6 @@ export default defineConfig({
   server: {
     host: '0.0.0.0', // Разрешить подключения извне
     port: 5173,
-    allowedHosts: ['rifelli.ru', 'localhost', '127.0.0.1'],
+    allowedHosts: ['rifelli.ru', 'localhost', '127.0.0.1', 'hugely-receiving-monster.cloudpub.ru'],
   },
 }) 

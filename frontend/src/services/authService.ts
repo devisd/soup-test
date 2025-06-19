@@ -39,7 +39,6 @@ export async function checkUserAuth(): Promise<AuthResponse> {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
-            credentials: 'include'
         });
 
         if (!response.ok) {
