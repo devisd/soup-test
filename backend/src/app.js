@@ -15,7 +15,17 @@ const options = {
 }
 
 const httpsServer = https.createServer(options, app)
-const io = require('socket.io')(httpsServer)
+
+// ✅ ИСПРАВЛЕНО: Указываем путь для Socket.IO
+const io = require('socket.io')(httpsServer, {
+  path: '/socket.io/',  // Путь для Socket.IO сервера
+  cors: {
+    origin: ["https://rifelli.ru", "https://localhost:5173"],
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ['polling', 'websocket']
+})
 
 app.use(express.static(path.join(__dirname, '..', 'frontend')))
 
@@ -78,11 +88,13 @@ async function createWorkers() {
 }
 
 io.on('connection', (socket) => {
+  console.log('🔌 New Socket.IO connection:', socket.id)
+
   socket.on('createRoom', async ({ room_id }, callback) => {
     if (roomList.has(room_id)) {
       callback('already exists')
     } else {
-      console.log('Created room', { room_id: room_id })
+      console.log('🏠 Created room', { room_id: room_id })
       let worker = await getMediasoupWorker()
       roomList.set(room_id, new Room(room_id, worker, io))
       callback(room_id)
@@ -90,9 +102,10 @@ io.on('connection', (socket) => {
   })
 
   socket.on('join', ({ room_id, name }, cb) => {
-    console.log('User joined', {
+    console.log('🚪 User joined', {
       room_id: room_id,
-      name: name
+      name: name,
+      socket_id: socket.id
     })
 
     if (!roomList.has(room_id)) {
@@ -103,22 +116,30 @@ io.on('connection', (socket) => {
 
     roomList.get(room_id).addPeer(new Peer(socket.id, name))
     socket.room_id = room_id
+    
+    // ✅ Присоединяем socket к Socket.IO комнате для чата
+    socket.join(room_id)
 
     cb(roomList.get(room_id).toJson())
   })
 
   socket.on('getProducers', () => {
     if (!roomList.has(socket.room_id)) return
-    console.log('Get producers', { name: `${roomList.get(socket.room_id).getPeers().get(socket.id).name}` })
+    console.log('📋 Get producers', { 
+      socket_id: socket.id,
+      name: `${roomList.get(socket.room_id).getPeers().get(socket.id).name}` 
+    })
 
     // send all the current producer to newly joined member
     let producerList = roomList.get(socket.room_id).getProducerListForPeer()
+    console.log('📤 Sending producers list:', producerList)
 
     socket.emit('newProducers', producerList)
   })
 
   socket.on('getRouterRtpCapabilities', (_, callback) => {
-    console.log('Get RouterRtpCapabilities', {
+    console.log('🔧 Get RouterRtpCapabilities', {
+      socket_id: socket.id,
       name: `${roomList.get(socket.room_id).getPeers().get(socket.id).name}`
     })
 
@@ -132,7 +153,8 @@ io.on('connection', (socket) => {
   })
 
   socket.on('createWebRtcTransport', async (_, callback) => {
-    console.log('Create webrtc transport', {
+    console.log('🚛 Create webrtc transport', {
+      socket_id: socket.id,
       name: `${roomList.get(socket.room_id).getPeers().get(socket.id).name}`
     })
 
@@ -141,7 +163,7 @@ io.on('connection', (socket) => {
 
       callback(params)
     } catch (err) {
-      console.error(err)
+      console.error('❌ Transport creation error:', err)
       callback({
         error: err.message
       })
@@ -149,7 +171,11 @@ io.on('connection', (socket) => {
   })
 
   socket.on('connectTransport', async ({ transport_id, dtlsParameters }, callback) => {
-    console.log('Connect transport', { name: `${roomList.get(socket.room_id).getPeers().get(socket.id).name}` })
+    console.log('🔗 Connect transport', { 
+      socket_id: socket.id,
+      transport_id: transport_id,
+      name: `${roomList.get(socket.room_id).getPeers().get(socket.id).name}` 
+    })
 
     if (!roomList.has(socket.room_id)) return
     await roomList.get(socket.room_id).connectPeerTransport(socket.id, transport_id, dtlsParameters)
@@ -158,16 +184,23 @@ io.on('connection', (socket) => {
   })
 
   socket.on('produce', async ({ kind, rtpParameters, producerTransportId }, callback) => {
+    console.log('🎬 Produce request', {
+      socket_id: socket.id,
+      kind: kind,
+      transportId: producerTransportId
+    })
+
     if (!roomList.has(socket.room_id)) {
       return callback({ error: 'not is a room' })
     }
 
     let producer_id = await roomList.get(socket.room_id).produce(socket.id, producerTransportId, rtpParameters, kind)
 
-    console.log('Produce', {
+    console.log('✅ Produce success', {
       type: `${kind}`,
+      socket_id: socket.id,
       name: `${roomList.get(socket.room_id).getPeers().get(socket.id).name}`,
-      id: `${producer_id}`
+      producer_id: `${producer_id}`
     })
 
     callback({
@@ -213,10 +246,19 @@ io.on('connection', (socket) => {
 
   socket.on('producerClosed', ({ producer_id }) => {
     console.log('Producer close', {
-      name: `${roomList.get(socket.room_id) && roomList.get(socket.room_id).getPeers().get(socket.id).name}`
+      name: `${roomList.get(socket.room_id) && roomList.get(socket.room_id).getPeers().get(socket.id).name}`,
+      producer_id: producer_id
     })
 
+    if (!roomList.has(socket.room_id)) return
+
     roomList.get(socket.room_id).closeProducer(socket.id, producer_id)
+    
+    // ✅ Уведомляем всех участников комнаты о закрытии producer
+    socket.to(socket.room_id).emit('producerClosed', { 
+      producer_id: producer_id,
+      peer_id: socket.id 
+    })
   })
 
   socket.on('exitRoom', async (_, callback) => {
@@ -239,6 +281,61 @@ io.on('connection', (socket) => {
     socket.room_id = null
 
     callback('successfully exited room')
+  })
+
+  // ✅ Обработка чат сообщений
+  socket.on('sendChatMessage', ({ roomId, userName, message, timestamp }) => {
+    console.log('💬 Chat message', {
+      roomId,
+      userName,
+      message: message.substring(0, 50) + (message.length > 50 ? '...' : '')
+    })
+
+    if (!roomList.has(roomId)) {
+      console.log('❌ Room not found for chat message')
+      return
+    }
+
+    // Отправляем сообщение всем участникам комнаты
+    const messageData = {
+      userName,
+      message,
+      timestamp
+    }
+
+    // Отправляем всем в комнате включая отправителя
+    io.to(roomId).emit('chatMessage', messageData)
+  })
+
+  // ✅ Обработка событий стрима
+  socket.on('streamStarted', ({ roomId }) => {
+    console.log('🎬 Stream started', {
+      roomId,
+      admin: `${roomList.get(roomId) && roomList.get(roomId).getPeers().get(socket.id).name}`
+    })
+
+    if (!roomList.has(roomId)) {
+      console.log('❌ Room not found for stream event')
+      return
+    }
+
+    // Уведомляем всех зрителей о начале стрима
+    socket.to(roomId).emit('streamStarted', { roomId })
+  })
+
+  socket.on('streamStopped', ({ roomId }) => {
+    console.log('⏹️ Stream stopped', {
+      roomId,
+      admin: `${roomList.get(roomId) && roomList.get(roomId).getPeers().get(socket.id).name}`
+    })
+
+    if (!roomList.has(roomId)) {
+      console.log('❌ Room not found for stream event')
+      return
+    }
+
+    // Уведомляем всех зрителей об остановке стрима
+    socket.to(roomId).emit('streamStopped', { roomId })
   })
 })
 

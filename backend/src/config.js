@@ -20,8 +20,8 @@ const getLocalIp = () => {
 module.exports = {
   listenIp: '0.0.0.0',
   listenPort: 3016,
-  sslCrt: '../ssl/cert.pem',
-  sslKey: '../ssl/key.pem',
+  sslCrt: 'ssl/cert.pem',
+  sslKey: 'ssl/key.pem',
 
   mediasoup: {
     // Worker settings
@@ -68,7 +68,7 @@ module.exports = {
       listenIps: [
         {
           ip: '0.0.0.0',
-          announcedIp: getLocalIp() // replace by public IP address
+          announcedIp: '147.45.240.127' // ✅ Публичный IP сервера rifelli.ru
         }
       ],
       maxIncomingBitrate: 1500000,
