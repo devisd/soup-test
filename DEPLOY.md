@@ -238,6 +238,19 @@ openssl req -new -x509 -keyout backend/ssl/key.pem -out backend/ssl/cert.pem -da
 docker-compose restart backend
 ```
 
+### Backend не запускается
+```bash
+# Проверка логов
+docker-compose -f docker-compose.prod.yml logs backend
+
+# Если ошибка компиляции mediasoup - пересоберите с очисткой кеша
+docker-compose -f docker-compose.prod.yml build --no-cache backend
+docker-compose -f docker-compose.prod.yml up -d backend
+
+# Проверка использования ресурсов (mediasoup требует много памяти)
+docker stats
+```
+
 ## 📞 Поддержка
 
 При возникновении проблем:
@@ -245,3 +258,193 @@ docker-compose restart backend
 2. Убедитесь в доступности портов
 3. Проверьте настройки firewall
 4. Убедитесь в корректности SSL сертификатов 
+
+## Безопасная интеграция с существующим бэкендом
+
+⚠️ **ВАЖНО**: Новая конфигурация nginx НЕ затронет ваш существующий бэкенд! 
+
+Mediasoup работает по отдельным путям:
+- 🌐 **Frontend**: `https://rifelli.ru/video/`
+- 🔌 **Socket.IO**: `https://rifelli.ru/video-api/socket.io/`
+- 📡 **API**: `https://rifelli.ru/video-api/`
+
+Ваш существующий бэкенд остается нетронутым на корневом домене.
+
+## Быстрый деплой
+
+1. **Запустите автоматический скрипт деплоя:**
+   ```bash
+   ./deploy-server.sh
+   ```
+
+2. **Обновите nginx конфигурацию:**
+   ```bash
+   sudo cp nginx-mediasoup.conf /etc/nginx/conf.d/mediasoup.conf
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+3. **Добавьте настройки вашего бэкенда в nginx-mediasoup.conf:**
+   ```nginx
+   # Пример для вашего существующего API
+   location /api/ {
+       proxy_pass http://localhost:YOUR_BACKEND_PORT;
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+   }
+   
+   # Пример для статических файлов
+   location / {
+       root /var/www/your-app;
+       try_files $uri $uri/ /index.html;
+   }
+   ```
+
+4. **Перезагрузите nginx:**
+   ```bash
+   sudo systemctl reload nginx
+   ```
+
+## Архитектура
+
+```
+🌐 https://rifelli.ru/
+├── /                    → Ваш существующий бэкенд
+├── /api/               → Ваш существующий API
+├── /privacy/           → Существующая privacy страница
+├── /video/             → Mediasoup видеоконференции
+└── /video-api/         → Mediasoup API и Socket.IO
+```
+
+## Локальное тестирование
+
+```bash
+./local-test.sh
+```
+
+Приложение будет доступно по адресу: `http://YOUR_LOCAL_IP:5173`
+
+## Архитектура решения
+
+### Backend (Node.js + mediasoup)
+- **Порт**: 3016 (HTTPS)
+- **WebRTC порты**: 10000-10100 (UDP)
+- **Технологии**: Express, Socket.IO, mediasoup
+- **SSL**: Let's Encrypt сертификаты
+
+### Frontend (React + TypeScript)
+- **Порт**: 8080 (внутри контейнера 80)
+- **Технологии**: React 18, TypeScript, Vite, mediasoup-client
+- **Сборка**: Multi-stage Docker с nginx
+
+### Nginx Proxy
+- **Frontend**: `/video/` → `http://localhost:8080`
+- **Socket.IO**: `/video-api/socket.io/` → `https://localhost:3016`
+- **API**: `/video-api/` → `https://localhost:3016`
+
+## Функции
+
+✅ **Видеоконференции**
+- Аудио/видео связь
+- Демонстрация экрана
+- Множественные участники
+- Адаптивный интерфейс
+
+✅ **Технические особенности**
+- WebRTC через mediasoup
+- Real-time коммуникация через Socket.IO
+- TypeScript для type safety
+- Docker контейнеризация
+- SSL/HTTPS поддержка
+
+## Управление
+
+### Запуск
+```bash
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+### Остановка
+```bash
+docker-compose -f docker-compose.prod.yml down
+```
+
+### Логи
+```bash
+docker-compose -f docker-compose.prod.yml logs -f
+```
+
+### Рестарт
+```bash
+docker-compose -f docker-compose.prod.yml restart
+```
+
+## Мониторинг
+
+### Проверка статуса
+```bash
+docker-compose -f docker-compose.prod.yml ps
+```
+
+### Мониторинг ресурсов
+```bash
+docker stats
+```
+
+### Проверка портов
+```bash
+netstat -tlnp | grep -E "80|3016|10000"
+```
+
+## Безопасность
+
+- ✅ HTTPS везде
+- ✅ Let's Encrypt сертификаты
+- ✅ Изолированная Docker сеть
+- ✅ Минимальные права доступа
+- ✅ Разделение на отдельные пути
+
+## Устранение проблем
+
+### Backend не запускается
+```bash
+docker-compose -f docker-compose.prod.yml logs backend
+```
+
+### Frontend недоступен
+```bash
+docker-compose -f docker-compose.prod.yml logs frontend
+curl -I http://localhost:8080
+```
+
+### WebRTC не работает
+1. Проверьте UDP порты 10000-10100
+2. Убедитесь, что SSL сертификаты валидны
+3. Проверьте firewall настройки
+
+### Socket.IO проблемы
+```bash
+curl -k https://localhost:3016/socket.io/
+```
+
+## Производительность
+
+### Оптимизация mediasoup
+- Настройка `numWorkers` по количеству CPU
+- Оптимизация `rtcMinPort`/`rtcMaxPort` диапазона
+- Настройка битрейта `maxIncomingBitrate`
+
+### Мониторинг нагрузки
+```bash
+# CPU и память
+htop
+# Сетевая активность
+iftop
+# Docker статистика
+docker stats
+```
+
+---
+
+🎉 **Готово!** Ваш существующий бэкенд работает как прежде, а видеоконференции доступны по адресу `https://rifelli.ru/video/` 

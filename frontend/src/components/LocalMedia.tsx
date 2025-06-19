@@ -23,12 +23,27 @@ export const LocalMedia: React.FC<LocalMediaProps> = ({
     return (
         <div style={{ marginTop: 32 }}>
             <h4>Local Media</h4>
-            {videoActive && (
-                <video ref={localVideoRef} autoPlay playsInline muted style={{ width: 320, marginRight: 16 }} />
-            )}
-            {screenActive && (
-                <video ref={localScreenRef} autoPlay playsInline muted style={{ width: 320 }} />
-            )}
+            <video 
+                ref={localVideoRef} 
+                autoPlay 
+                playsInline 
+                muted 
+                style={{ 
+                    width: 320, 
+                    marginRight: 16,
+                    display: videoActive ? 'block' : 'none'
+                }} 
+            />
+            <video 
+                ref={localScreenRef} 
+                autoPlay 
+                playsInline 
+                muted 
+                style={{ 
+                    width: 320,
+                    display: screenActive ? 'block' : 'none'
+                }} 
+            />
         </div>
     );
 }; 

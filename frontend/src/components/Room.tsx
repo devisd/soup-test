@@ -4,6 +4,7 @@ import { ParticipantsList } from './ParticipantsList';
 import { MediaControls } from './MediaControls';
 import { LocalMedia } from './LocalMedia';
 import { RemoteMedia } from './RemoteMedia';
+import { Chat } from './Chat';
 import { useRoomClient, MediaType } from '../hooks/useRoomClient';
 
 /**
@@ -35,7 +36,8 @@ export const Room: React.FC<RoomProps> = ({ roomId, userName, onExit }) => {
         stopMedia,
         remoteStreams,
         participants,
-    } = useRoomClient({ roomId, userName });
+        socket,
+    } = useRoomClient({ roomId, userName, localVideoRef, localScreenRef });
 
     // Автоматический вход в комнату при монтировании
     useEffect(() => {
@@ -90,13 +92,26 @@ export const Room: React.FC<RoomProps> = ({ roomId, userName, onExit }) => {
                 onScreen={() => state.screenActive ? stopMedia('screen') : handleStartMedia('screen')}
                 disabled={!state.transportsReady}
             />
-            <LocalMedia
-                videoActive={!!state.videoActive}
-                screenActive={!!state.screenActive}
-                localVideoRef={localVideoRef}
-                localScreenRef={localScreenRef}
-            />
-            <RemoteMedia remoteStreams={remoteStreams} />
+            
+            {/* Основная область с медиа и чатом */}
+            <div style={{ display: 'flex', gap: 32, alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                    <LocalMedia
+                        videoActive={!!state.videoActive}
+                        screenActive={!!state.screenActive}
+                        localVideoRef={localVideoRef}
+                        localScreenRef={localScreenRef}
+                    />
+                    <RemoteMedia remoteStreams={remoteStreams} />
+                </div>
+                
+                <Chat 
+                    socket={socket} 
+                    userName={userName} 
+                    roomId={roomId} 
+                />
+            </div>
+            
             {state.error && (
                 <div style={{ color: 'red', marginTop: 16 }}>{state.error}</div>
             )}

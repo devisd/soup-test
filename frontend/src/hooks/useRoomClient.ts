@@ -12,6 +12,8 @@ export type MediaType = 'audio' | 'video' | 'screen';
 export interface RoomClientOptions {
     roomId: string;
     userName: string;
+    localVideoRef?: React.RefObject<HTMLVideoElement>;
+    localScreenRef?: React.RefObject<HTMLVideoElement>;
 }
 
 export interface RoomClientState {
@@ -41,7 +43,7 @@ interface RemoteStream {
  * Хук для управления комнатой, медиа и участниками через mediasoup и socket.io.
  * Возвращает состояния, методы управления медиа, список участников и remote media.
  */
-export function useRoomClient({ roomId, userName }: RoomClientOptions) {
+export function useRoomClient({ roomId, userName, localVideoRef, localScreenRef }: RoomClientOptions) {
     const [state, setState] = useState<RoomClientState>({ joined: false });
     const [remoteStreams, setRemoteStreams] = useState<RemoteStream[]>([]);
     const [participants, setParticipants] = useState<string[]>([]);
@@ -55,10 +57,14 @@ export function useRoomClient({ roomId, userName }: RoomClientOptions) {
 
     // Подключение к socket.io
     useEffect(() => {
-        // Подключаемся к серверу socket.io через proxy
-        let socket = io({
+        // Подключаемся к серверу socket.io через nginx proxy, используем только polling
+        console.log('🔌 Connecting to Socket.IO server...');
+        let socket = io('https://rifelli.ru', {
+            path: '/video-api/socket.io/',  // ✅ ИСПРАВЛЕНО: Указываем путь отдельно
             forceNew: true,
             timeout: 20000,
+            transports: ['polling'], // Используем только polling для стабильности
+            autoConnect: true,
         });
         
         socket.on('connect', () => {
@@ -71,28 +77,12 @@ export function useRoomClient({ roomId, userName }: RoomClientOptions) {
         
         socket.on('connect_error', (error) => {
             console.log('❌ Socket connection error:', error);
-            // Если подключение через proxy не работает, пробуем прямое подключение
-            socket.disconnect();
-            socket = io('https://192.168.1.123:3016', {
-                forceNew: true,
-                timeout: 20000,
-                rejectUnauthorized: false, // Игнорировать самоподписанные сертификаты
-            });
-            
-            socket.on('connect', () => {
-                console.log('✅ Direct socket connected successfully, ID:', socket.id);
-            });
-            
-            socket.on('disconnect', (reason) => {
-                console.log('❌ Direct socket disconnected, reason:', reason);
-            });
-            
-            socketRef.current = socket;
         });
         
         socketRef.current = socket;
         return () => {
             // Отключаемся при размонтировании
+            console.log('🔌 Disconnecting socket...');
             socket.disconnect();
         };
     }, [roomId, userName]);
@@ -298,50 +288,126 @@ export function useRoomClient({ roomId, userName }: RoomClientOptions) {
 
     // Публикация медиа
     const startMedia = useCallback(async (type: MediaType, deviceId?: string) => {
+        console.log(`🎬 Starting ${type} media...`);
+        console.log('📍 Refs available:', { localVideoRef: !!localVideoRef?.current, localScreenRef: !!localScreenRef?.current }); // ✅ Отладочный лог
+        
         const producerTransport = producerTransportRef.current;
-        if (!producerTransport) return;
+        if (!producerTransport) {
+            console.log('❌ No producer transport available');
+            setState(s => ({ ...s, error: 'Producer transport not ready' }));
+            return;
+        }
+
+        // Проверяем что транспорты готовы
+        if (!state.transportsReady) {
+            console.log('❌ Transports not ready yet');
+            setState(s => ({ ...s, error: 'Transports not ready yet' }));
+            return;
+        }
+
         let constraints: MediaStreamConstraints;
         if (type === 'audio') {
             constraints = { audio: deviceId ? { deviceId } : true, video: false };
         } else if (type === 'video') {
-            constraints = { audio: false, video: deviceId ? { deviceId } : true };
+            constraints = { audio: false, video: deviceId ? { deviceId } : { width: 640, height: 480 } };
         } else if (type === 'screen') {
             // Для экрана используем getDisplayMedia
             try {
-                const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true });
+                console.log('🖥️ Requesting screen share...');
+                const stream = await (navigator.mediaDevices as any).getDisplayMedia({ 
+                    video: true,
+                    audio: false 
+                });
                 const track = stream.getVideoTracks()[0];
+                
+                console.log('🎬 Screen track obtained, creating producer...');
                 const producer = await producerTransport.produce({ track });
                 producersRef.current[type] = producer;
-                setState(s => ({ ...s, screenActive: true }));
+                
+                // ✅ Устанавливаем stream в локальный screen video элемент
+                if (localScreenRef?.current) {
+                    localScreenRef.current.srcObject = stream;
+                    console.log('📺 Local screen srcObject set:', stream, localScreenRef.current); // ✅ Отладочный лог
+                } else {
+                    console.log('❌ localScreenRef.current is null'); // ✅ Отладочный лог
+                }
+                
+                // Обработка остановки screen share
+                track.addEventListener('ended', () => {
+                    console.log('🛑 Screen share ended by user');
+                    stopMedia('screen');
+                });
+                
+                setState(s => ({ ...s, screenActive: true, error: undefined }));
+                console.log('✅ Screen share started successfully');
                 return;
             } catch (err) {
+                console.log('❌ Screen share error:', err);
                 setState(s => ({ ...s, error: 'Screen share error: ' + (err instanceof Error ? err.message : String(err)) }));
                 return;
             }
         } else {
             return;
         }
+        
         try {
+            console.log(`🎥 Requesting ${type} media with constraints:`, constraints);
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
             const track = type === 'audio' ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+            
+            if (!track) {
+                throw new Error(`No ${type} track found`);
+            }
+            
+            console.log(`🎬 ${type} track obtained, creating producer...`);
             const producer = await producerTransport.produce({ track });
             producersRef.current[type] = producer;
+            
+            // ✅ Устанавливаем stream в локальный video элемент для видео
+            if (type === 'video' && localVideoRef?.current) {
+                localVideoRef.current.srcObject = stream;
+                console.log('📺 Local video srcObject set:', stream, localVideoRef.current); // ✅ Отладочный лог
+            } else if (type === 'video') {
+                console.log('❌ localVideoRef.current is null'); // ✅ Отладочный лог
+            }
+            
             setState(s => ({
                 ...s,
                 audioActive: type === 'audio' ? true : s.audioActive,
                 videoActive: type === 'video' ? true : s.videoActive,
+                error: undefined
             }));
+            
+            console.log(`✅ ${type} media started successfully`);
         } catch (err) {
-            setState(s => ({ ...s, error: 'Media error: ' + (err instanceof Error ? err.message : String(err)) }));
+            console.log(`❌ ${type} media error:`, err);
+            setState(s => ({ ...s, error: `${type} error: ` + (err instanceof Error ? err.message : String(err)) }));
         }
-    }, []);
+    }, [state.transportsReady, localVideoRef, localScreenRef]);
 
     // Остановка публикации медиа
     const stopMedia = useCallback((type: MediaType) => {
         const producer = producersRef.current[type];
         if (producer) {
+            console.log(`🛑 Stopping ${type} media, producer_id:`, producer.id);
+            
+            // ✅ Уведомляем сервер о закрытии producer
+            const socket = socketRef.current;
+            if (socket) {
+                socket.emit('producerClosed', { producer_id: producer.id });
+            }
+            
             producer.close();
             delete producersRef.current[type];
+            
+            // ✅ Очищаем video элементы
+            if (type === 'video' && localVideoRef?.current) {
+                localVideoRef.current.srcObject = null;
+            }
+            if (type === 'screen' && localScreenRef?.current) {
+                localScreenRef.current.srcObject = null;
+            }
+            
             setState(s => ({
                 ...s,
                 audioActive: type === 'audio' ? false : s.audioActive,
@@ -349,7 +415,7 @@ export function useRoomClient({ roomId, userName }: RoomClientOptions) {
                 screenActive: type === 'screen' ? false : s.screenActive,
             }));
         }
-    }, []);
+    }, [localVideoRef, localScreenRef]);
 
     // --- Remote media: подписка на новых продюсеров и consume ---
     useEffect(() => {
@@ -359,22 +425,36 @@ export function useRoomClient({ roomId, userName }: RoomClientOptions) {
         if (!socket || !device || !consumerTransport) return;
 
         // Получить текущих продюсеров после входа
+        console.log('🔍 Requesting existing producers...');
         socket.emit('getProducers');
+
+        // ✅ Дополнительный запрос producers через небольшую задержку
+        // Это помогает зрителям получить producer'ы которые уже существуют
+        const timeoutId = setTimeout(() => {
+            console.log('🔍 Requesting producers again (delayed check)...');
+            socket.emit('getProducers');
+        }, 1000);
 
         // Подписка на новых продюсеров
         const handleNewProducers = (producers: any[]) => {
+            console.log('📺 Received producers:', producers.length);
             producers.forEach(async (producer: any) => {
                 // Не подписываться на свои потоки
                 if (producer.producer_socket_id === socket.id) return;
                 // Уже подписан
                 if (consumersRef.current[producer.producer_id]) return;
+                
+                console.log('🎬 Consuming producer:', producer.producer_id);
                 // consume
                 socket.emit('consume', {
                     consumerTransportId: consumerTransport.id,
                     producerId: producer.producer_id,
                     rtpCapabilities: device.rtpCapabilities,
                 }, async (params: any) => {
-                    if (params.error) return;
+                    if (params.error) {
+                        console.log('❌ Consume error:', params.error);
+                        return;
+                    }
                     const consumer: Consumer = await consumerTransport.consume({
                         id: params.id,
                         producerId: params.producerId,
@@ -385,12 +465,38 @@ export function useRoomClient({ roomId, userName }: RoomClientOptions) {
                     const stream = new MediaStream([consumer.track]);
                     setRemoteStreams(prev => ([...prev, { id: params.producerId, kind: params.kind, stream }]));
                     consumer.resume();
+                    console.log('✅ Consumer created and resumed:', params.producerId);
                 });
             });
         };
+
+        // ✅ Обработка закрытия producer у других участников
+        const handleProducerClosed = ({ producer_id, peer_id }: { producer_id: string, peer_id: string }) => {
+            console.log('🔴 Remote producer closed:', { producer_id, peer_id });
+            
+            // Закрываем consumer если он существует
+            const consumer = consumersRef.current[producer_id];
+            if (consumer) {
+                console.log('🗑️ Closing consumer:', producer_id);
+                consumer.close();
+                delete consumersRef.current[producer_id];
+            }
+            
+            // Удаляем stream из remote streams
+            setRemoteStreams(prev => {
+                const updated = prev.filter(stream => stream.id !== producer_id);
+                console.log('📺 Updated remote streams count:', updated.length);
+                return updated;
+            });
+        };
+
         socket.on('newProducers', handleNewProducers);
+        socket.on('producerClosed', handleProducerClosed); // ✅ Добавляем обработчик
+
         return () => {
             socket.off('newProducers', handleNewProducers);
+            socket.off('producerClosed', handleProducerClosed); // ✅ Убираем обработчик
+            clearTimeout(timeoutId); // ✅ Очищаем timeout
         };
     }, [state.transportsReady]);
 

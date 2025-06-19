@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mediasoup-backend
+    ports:
+      - "3016:3016"
+      - "10000-10100:10000-10100/udp"
+    environment:
+      - NODE_ENV=production
+      - DOMAIN=rifelli.ru
+      - SSL_CERT=/app/ssl/cert.pem
+      - SSL_KEY=/app/ssl/key.pem
+    volumes:
+      - /etc/letsencrypt/live/rifelli.ru:/app/ssl:ro
+    restart: unless-stopped
+    networks:
+      - mediasoup-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mediasoup-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - mediasoup-network
+
+networks:
+  mediasoup-network:
+    driver: bridge 
